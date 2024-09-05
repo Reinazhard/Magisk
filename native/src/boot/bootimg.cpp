@@ -626,37 +626,40 @@ void repack(Utf8CStr src_img, Utf8CStr out_img, bool skip_comp) {
         xwrite(fd, boot.z_info->head.data(), boot.z_info->head.size());
     }
     uint32_t z_payload_sz = 0;
-    if (access(KERNEL_FILE, R_OK) == 0) {
-        mmap_data m(KERNEL_FILE);
-        uint32_t payload_sz = 0;
-        if (!skip_comp && !fmt_compressed_any(check_fmt(m.data(), m.size())) && fmt_compressed(boot.k_fmt)) {
-            payload_sz = compress_len(boot.k_fmt, m, fd);
-            if (boot.flags[ZIMAGE_KERNEL] && boot.k_fmt != FileFormat::GZIP) {
-                // For non-gzip compression in zImage, size_append appends the 4-byte LE uncompressed size
-                uint32_t sz = m.size();
-                xwrite(fd, &sz, sizeof(sz));
-                payload_sz += sizeof(sz);
+    // Forbid adding a kernel into an image which didn't have one previously
+    if (boot.hdr->kernel_size() != 0) {
+        if (access(KERNEL_FILE, R_OK) == 0) {
+            mmap_data m(KERNEL_FILE);
+            uint32_t payload_sz = 0;
+            if (!skip_comp && !fmt_compressed_any(check_fmt(m.data(), m.size())) && fmt_compressed(boot.k_fmt)) {
+                payload_sz = compress_len(boot.k_fmt, m, fd);
+                if (boot.flags[ZIMAGE_KERNEL] && boot.k_fmt != FileFormat::GZIP) {
+                    // For non-gzip compression in zImage, size_append appends the 4-byte LE uncompressed size
+                    uint32_t sz = m.size();
+                    xwrite(fd, &sz, sizeof(sz));
+                    payload_sz += sizeof(sz);
+                }
+                hdr->kernel_size() = payload_sz;
+            } else {
+                payload_sz = xwrite(fd, m.data(), m.size());
+                hdr->kernel_size() = payload_sz;
             }
-            hdr->kernel_size() = payload_sz;
-        } else {
-            payload_sz = xwrite(fd, m.data(), m.size());
-            hdr->kernel_size() = payload_sz;
-        }
 
-        if (boot.flags[ZIMAGE_KERNEL]) {
-            z_payload_sz = payload_sz;
-            auto tail_buf = boot.z_info->new_tail(payload_sz);
-            xwrite(fd, tail_buf.data(), tail_buf.size());
-            hdr->kernel_size() = boot.z_info->head.size() + payload_sz + tail_buf.size();
-        }
-    } else if (boot.hdr->kernel_size() != 0) {
-        if (boot.flags[ZIMAGE_KERNEL]) {
-            xwrite(fd, boot.z_info->piggy.data(), boot.z_info->piggy.size());
-            xwrite(fd, boot.z_info->tail.data(), boot.z_info->tail.size());
-            hdr->kernel_size() = boot.z_info->head.size() + boot.z_info->piggy.size() + boot.z_info->tail.size();
+            if (boot.flags[ZIMAGE_KERNEL]) {
+                z_payload_sz = payload_sz;
+                auto tail_buf = boot.z_info->new_tail(payload_sz);
+                xwrite(fd, tail_buf.data(), tail_buf.size());
+                hdr->kernel_size() = boot.z_info->head.size() + payload_sz + tail_buf.size();
+            }
         } else {
-            xwrite(fd, boot.kernel, boot.hdr->kernel_size());
-            hdr->kernel_size() = boot.hdr->kernel_size();
+            if (boot.flags[ZIMAGE_KERNEL]) {
+                xwrite(fd, boot.z_info->piggy.data(), boot.z_info->piggy.size());
+                xwrite(fd, boot.z_info->tail.data(), boot.z_info->tail.size());
+                hdr->kernel_size() = boot.z_info->head.size() + boot.z_info->piggy.size() + boot.z_info->tail.size();
+            } else {
+                xwrite(fd, boot.kernel, boot.hdr->kernel_size());
+                hdr->kernel_size() = boot.hdr->kernel_size();
+            }
         }
     }
 
